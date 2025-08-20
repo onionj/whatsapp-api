@@ -35,6 +35,7 @@ type IncomingSendRequest struct {
 
 // --- Helpers ---
 func sendToWebhook(endpoint, endpointTest, user, pass string, payload OutgoingWebhookPayload) {
+	fmt.Println(payload.Sender, payload.Message)
 	domains := [2]string{endpoint, endpointTest}
 	for _, domain := range domains {
 		data, _ := json.Marshal(payload)
@@ -77,7 +78,7 @@ func newClient(ctx context.Context) *whatsmeow.Client {
 	if err != nil {
 		panic(err)
 	}
-	clientLog := waLog.Stdout("Client", "DEBUG", true)
+	clientLog := waLog.Stdout("Client", "INFO", true)
 	return whatsmeow.NewClient(deviceStore, clientLog)
 }
 
@@ -85,13 +86,35 @@ func newClient(ctx context.Context) *whatsmeow.Client {
 func registerMessageHandler(client *whatsmeow.Client, webhook, webhookTest, user, pass string) {
 	client.AddEventHandler(func(evt interface{}) {
 		if v, ok := evt.(*events.Message); ok && !v.Info.MessageSource.IsFromMe {
-			text := v.Message.GetConversation()
+			var text string
+
+			if v.Message.GetConversation() != "" {
+				text = v.Message.GetConversation()
+			} else if v.Message.ExtendedTextMessage != nil {
+				text = v.Message.ExtendedTextMessage.GetText()
+			} else if v.Message.ImageMessage != nil {
+				text = v.Message.ImageMessage.GetCaption()
+			} else if v.Message.VideoMessage != nil {
+				text = v.Message.VideoMessage.GetCaption()
+			}
+
+			// Send text
 			if text != "" {
 				go sendToWebhook(webhook, webhookTest, user, pass, OutgoingWebhookPayload{
 					Sender:  v.Info.Sender.User,
 					Message: text,
 				})
 			}
+
+			// Handle voice notes
+			// if v.Message.AudioMessage != nil {
+			// 	data, err := client.Download(context.Background(), v.Message.AudioMessage)
+			// 	if err != nil {
+			// 		fmt.Println("failed to download audio:", err)
+			// 		return
+			// 	}
+			// 	fmt.Println("voice received", len(data))
+			// }
 		}
 	})
 }
