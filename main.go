@@ -174,6 +174,7 @@ func startClient(ctx context.Context, client *whatsmeow.Client) {
 
 // --- Main ---
 func main() {
+	fmt.Println("version 1")
 	ctx := context.Background()
 	webhook, webhookTest, user, pass, listenAddr := loadConfig()
 	client := newClient(ctx)
