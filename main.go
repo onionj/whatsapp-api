@@ -98,23 +98,19 @@ func registerMessageHandler(client *whatsmeow.Client, webhook, webhookTest, user
 				text = v.Message.VideoMessage.GetCaption()
 			}
 
+			sender := v.Info.Sender.User
+			if v.Info.Chat.Server == "lid" {
+				sender = v.Info.MessageSource.SenderAlt.User
+				fmt.Println("lid ", sender)
+			}
+
 			// Send text
 			if text != "" {
 				go sendToWebhook(webhook, webhookTest, user, pass, OutgoingWebhookPayload{
-					Sender:  v.Info.Sender.User,
+					Sender:  sender,
 					Message: text,
 				})
 			}
-
-			// Handle voice notes
-			// if v.Message.AudioMessage != nil {
-			// 	data, err := client.Download(context.Background(), v.Message.AudioMessage)
-			// 	if err != nil {
-			// 		fmt.Println("failed to download audio:", err)
-			// 		return
-			// 	}
-			// 	fmt.Println("voice received", len(data))
-			// }
 		}
 	})
 }
