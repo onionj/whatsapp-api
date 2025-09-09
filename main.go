@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
 	"os/signal"
 	"syscall"
@@ -26,6 +29,7 @@ import (
 type OutgoingWebhookPayload struct {
 	Sender  string `json:"sender"`
 	Message string `json:"message"`
+	Voice   []byte `json:"voice,omitempty"`
 }
 
 type IncomingSendRequest struct {
@@ -52,6 +56,81 @@ func sendToWebhook(endpoint, endpointTest, user, pass string, payload OutgoingWe
 			break
 		}
 	}
+}
+
+func sendToWebhookVoice(endpoint, endpointTest, user, pass string, payload OutgoingWebhookPayload) {
+	fmt.Println(payload.Sender, "voice", len(payload.Voice))
+
+	domains := [2]string{endpoint + "/voice", endpointTest + "/voice"}
+
+	for _, domain := range domains {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+
+		// include sender as a field
+		_ = writer.WriteField("sender", payload.Sender)
+
+		// choose filename & content-type based on header detection
+		filename := "file_50.oga"
+		contentType := "audio/ogg; codecs=opus"
+		if !(len(payload.Voice) >= 4 && string(payload.Voice[:4]) == "OggS") {
+			// fallback if the file isn't an OGG container
+			filename = "file_50.opus"
+			contentType = "audio/opus"
+		}
+
+		partHeaders := textproto.MIMEHeader{}
+		partHeaders.Set("Content-Disposition", fmt.Sprintf(`form-data; name="data"; filename="%s"`, filename))
+		partHeaders.Set("Content-Type", contentType)
+
+		part, err := writer.CreatePart(partHeaders)
+		if err != nil {
+			fmt.Println("failed to create multipart part:", err)
+			_ = writer.Close()
+			continue
+		}
+
+		// write payload to the part
+		if _, err := io.Copy(part, bytes.NewReader(payload.Voice)); err != nil {
+			fmt.Println("failed to write payload to multipart part:", err)
+			_ = writer.Close()
+			continue
+		}
+
+		if err := writer.Close(); err != nil {
+			fmt.Println("failed to close multipart writer:", err)
+			continue
+		}
+
+		req, err := http.NewRequest("POST", domain, body)
+		if err != nil {
+			fmt.Println("failed to build request:", err)
+			continue
+		}
+		req.Header.Set("Content-Type", writer.FormDataContentType()) // includes boundary
+		req.SetBasicAuth(user, pass)
+
+		client := &http.Client{}
+		res, err := client.Do(req)
+		if err != nil {
+			fmt.Printf("----->>> Error in calling webhook, %T\n", err)
+			continue
+		}
+		if res.StatusCode != 200 {
+			fmt.Printf("----->>> Error in calling webhook, %s\n", res.Status)
+			continue
+		}
+		// success -> stop trying other domain
+		break
+	}
+}
+
+// helper used above
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // --- Config & Client Setup ---
@@ -109,6 +188,20 @@ func registerMessageHandler(client *whatsmeow.Client, webhook, webhookTest, user
 				go sendToWebhook(webhook, webhookTest, user, pass, OutgoingWebhookPayload{
 					Sender:  sender,
 					Message: text,
+				})
+				return
+			}
+			// Handle voice notes
+			if v.Message.AudioMessage != nil {
+				data, err := client.Download(context.Background(), v.Message.AudioMessage)
+				if err != nil {
+					fmt.Println("failed to download audio:", err)
+					return
+				}
+				fmt.Println("voice received", len(data))
+				go sendToWebhookVoice(webhook, webhookTest, user, pass, OutgoingWebhookPayload{
+					Sender: sender,
+					Voice:  data,
 				})
 			}
 		}
@@ -174,7 +267,7 @@ func startClient(ctx context.Context, client *whatsmeow.Client) {
 
 // --- Main ---
 func main() {
-	fmt.Println("version 1")
+	fmt.Println("version 2")
 	ctx := context.Background()
 	webhook, webhookTest, user, pass, listenAddr := loadConfig()
 	client := newClient(ctx)
