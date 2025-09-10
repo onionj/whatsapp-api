@@ -32,7 +32,7 @@ LISTEN_ADDR=0.0.0.0:1012
 - Run:
 
 ```
-./whatsapp-web-api
+./whatsappapi-linux-amd64
 ```
 
 NOTE: On first run, scan the displayed QR code in WhatsApp to pair the device.
