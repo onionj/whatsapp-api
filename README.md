@@ -2,8 +2,9 @@
 
 A lightweight unofficial WhatsApp API built with whatsmeow, designed to integrate WhatsApp with n8n.
 
-It forwards incoming WhatsApp messages (text + voice notes) to webhooks and provides a simple HTTP endpoint to send messages.
+It delivers incoming WhatsApp messages (text and voice notes) to n8n webhooks, and exposes a simple HTTP endpoint that n8n can call to send messages back.
 
+![n8n Workflow Example](./screenshot/1.png)
 
 ## ✨ Features
 - Receive WhatsApp messages → forward to webhook (text + voice notes).
@@ -13,7 +14,6 @@ It forwards incoming WhatsApp messages (text + voice notes) to webhooks and prov
 - QR code pairing for WhatsApp login.
 
 ## ⚙️ Requirements
-- Go 1.20+
 - WhatsApp account (to scan QR code)
 - n8n instance for automation
 
@@ -62,5 +62,3 @@ Content-Type: application/json
 - Use responsibly to avoid account bans.
 - For production: run behind reverse proxy + HTTPS.
 
-## Example N8N Workflow Image
-![n8n Workflow Example](./screenshot/1.png)
