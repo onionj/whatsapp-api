@@ -18,6 +18,7 @@ import (
 	waProto "go.mau.fi/whatsmeow/proto/waE2E"
 	_ "modernc.org/sqlite"
 
+	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -25,7 +26,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// --- Types ---
 type OutgoingWebhookPayload struct {
 	Sender  string `json:"sender"`
 	Message string `json:"message"`
@@ -37,116 +37,105 @@ type IncomingSendRequest struct {
 	Text   string `json:"text"`
 }
 
-// --- Helpers ---
-func sendToWebhook(endpoint, endpointTest, user, pass string, payload OutgoingWebhookPayload) {
-	fmt.Println(payload.Sender, payload.Message)
-	domains := [2]string{endpoint, endpointTest}
-	for _, domain := range domains {
-		data, _ := json.Marshal(payload)
-		req, _ := http.NewRequest("POST", domain, bytes.NewBuffer(data))
-		req.Header.Set("Content-Type", "application/json")
-		req.SetBasicAuth(user, pass)
-		client := &http.Client{}
-		res, err := client.Do(req)
-		if err != nil {
-			fmt.Printf("----->>> Error in calling webhook, %T\n", err)
-		} else if res.StatusCode != 200 {
-			fmt.Printf("----->>> Error in calling webhook, %s\n", res.Status)
-		} else {
-			break
-		}
-	}
-}
+var (
+	textWebhook  string
+	voiceWebhook string
+	user         string
+	pass         string
+	listenAddr   string
+)
 
-func sendToWebhookVoice(endpoint, endpointTest, user, pass string, payload OutgoingWebhookPayload) {
-	fmt.Println(payload.Sender, "voice", len(payload.Voice))
-
-	domains := [2]string{endpoint + "/voice", endpointTest + "/voice"}
-
-	for _, domain := range domains {
-		body := &bytes.Buffer{}
-		writer := multipart.NewWriter(body)
-
-		// include sender as a field
-		_ = writer.WriteField("sender", payload.Sender)
-
-		// choose filename & content-type based on header detection
-		filename := "file_50.oga"
-		contentType := "audio/ogg; codecs=opus"
-		if !(len(payload.Voice) >= 4 && string(payload.Voice[:4]) == "OggS") {
-			// fallback if the file isn't an OGG container
-			filename = "file_50.opus"
-			contentType = "audio/opus"
-		}
-
-		partHeaders := textproto.MIMEHeader{}
-		partHeaders.Set("Content-Disposition", fmt.Sprintf(`form-data; name="data"; filename="%s"`, filename))
-		partHeaders.Set("Content-Type", contentType)
-
-		part, err := writer.CreatePart(partHeaders)
-		if err != nil {
-			fmt.Println("failed to create multipart part:", err)
-			_ = writer.Close()
-			continue
-		}
-
-		// write payload to the part
-		if _, err := io.Copy(part, bytes.NewReader(payload.Voice)); err != nil {
-			fmt.Println("failed to write payload to multipart part:", err)
-			_ = writer.Close()
-			continue
-		}
-
-		if err := writer.Close(); err != nil {
-			fmt.Println("failed to close multipart writer:", err)
-			continue
-		}
-
-		req, err := http.NewRequest("POST", domain, body)
-		if err != nil {
-			fmt.Println("failed to build request:", err)
-			continue
-		}
-		req.Header.Set("Content-Type", writer.FormDataContentType()) // includes boundary
-		req.SetBasicAuth(user, pass)
-
-		client := &http.Client{}
-		res, err := client.Do(req)
-		if err != nil {
-			fmt.Printf("----->>> Error in calling webhook, %T\n", err)
-			continue
-		}
-		if res.StatusCode != 200 {
-			fmt.Printf("----->>> Error in calling webhook, %s\n", res.Status)
-			continue
-		}
-		// success -> stop trying other domain
-		break
-	}
-}
-
-// helper used above
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// --- Config & Client Setup ---
-func loadConfig() (webhook, webhookTest, user, pass, listenAddr string) {
+func init() {
 	_ = godotenv.Load()
-	webhook = os.Getenv("WEBHOOK_URL")
-	webhookTest = os.Getenv("WEBHOOK_URL_TEST")
+	textWebhook = os.Getenv("TEXT_WEBHOOK_URL")
+	voiceWebhook = os.Getenv("VOICE_WEBHOOK_URL")
 	user = os.Getenv("WEBHOOK_USER")
 	pass = os.Getenv("WEBHOOK_PASS")
 	listenAddr = os.Getenv("LISTEN_ADDR")
-	if webhook == "" || user == "" || pass == "" || listenAddr == "" {
-		panic("WEBHOOK_URL, WEBHOOK_USER, WEBHOOK_PASS, LISTEN_ADDR must be set in .env")
+	if voiceWebhook == "" || textWebhook == "" || user == "" || pass == "" || listenAddr == "" {
+		panic("TEXT_WEBHOOK_URL, VOICE_WEBHOOK_URL, WEBHOOK_USER, WEBHOOK_PASS, LISTEN_ADDR must be set in .env")
 	}
-	return
 }
 
+// sendToWebhook is a helper function to send new whatsapp message to the configured webhook
+func sendToWebhook(payload OutgoingWebhookPayload) {
+	fmt.Println(payload.Sender, payload.Message)
+	data, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", textWebhook, bytes.NewBuffer(data))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(user, pass)
+	client := &http.Client{}
+	res, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("Error in calling webhook, %T\n", err)
+	} else if res.StatusCode != 200 {
+		fmt.Printf("Error in calling webhook, %s\n", res.Status)
+	}
+}
+
+// sendToWebhookVoice is a helper function to send new whatsapp voice note to the configured webhook
+func sendToWebhookVoice(payload OutgoingWebhookPayload) {
+	fmt.Println(payload.Sender, "voice", len(payload.Voice))
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// include sender as a field
+	_ = writer.WriteField("sender", payload.Sender)
+
+	// choose filename & content-type based on header detection
+	filename := "file.oga"
+	contentType := "audio/ogg; codecs=opus"
+	if !(len(payload.Voice) >= 4 && string(payload.Voice[:4]) == "OggS") {
+		// fallback if the file isn't an OGG container
+		filename = "file.opus"
+		contentType = "audio/opus"
+	}
+
+	partHeaders := textproto.MIMEHeader{}
+	partHeaders.Set("Content-Disposition", fmt.Sprintf(`form-data; name="data"; filename="%s"`, filename))
+	partHeaders.Set("Content-Type", contentType)
+
+	part, err := writer.CreatePart(partHeaders)
+	if err != nil {
+		fmt.Println("failed to create multipart part:", err)
+		_ = writer.Close()
+		return
+	}
+
+	// write payload to the part
+	if _, err := io.Copy(part, bytes.NewReader(payload.Voice)); err != nil {
+		fmt.Println("failed to write payload to multipart part:", err)
+		_ = writer.Close()
+		return
+	}
+
+	if err := writer.Close(); err != nil {
+		fmt.Println("failed to close multipart writer:", err)
+		return
+	}
+
+	req, err := http.NewRequest("POST", voiceWebhook, body)
+	if err != nil {
+		fmt.Println("failed to build request:", err)
+		return
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType()) // includes boundary
+	req.SetBasicAuth(user, pass)
+
+	client := &http.Client{}
+	res, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("----->>> Error in calling webhook, %T\n", err)
+		return
+	}
+	if res.StatusCode != 200 {
+		fmt.Printf("----->>> Error in calling webhook, %s\n", res.Status)
+		return
+	}
+}
+
+// newClient initializes a new WhatsApp client using whatsmeow and a SQLite database
 func newClient(ctx context.Context) *whatsmeow.Client {
 	dbLog := waLog.Stdout("Database", "DEBUG", true)
 	container, err := sqlstore.New(ctx, "sqlite", "file:session.db?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", dbLog)
@@ -161,8 +150,8 @@ func newClient(ctx context.Context) *whatsmeow.Client {
 	return whatsmeow.NewClient(deviceStore, clientLog)
 }
 
-// --- Handlers ---
-func registerMessageHandler(client *whatsmeow.Client, webhook, webhookTest, user, pass string) {
+// registerMessageHandler sets up a handler to process incoming whatsapp messages
+func registerMessageHandler(client *whatsmeow.Client) {
 	client.AddEventHandler(func(evt interface{}) {
 		if v, ok := evt.(*events.Message); ok && !v.Info.MessageSource.IsFromMe {
 			var text string
@@ -180,12 +169,11 @@ func registerMessageHandler(client *whatsmeow.Client, webhook, webhookTest, user
 			sender := v.Info.Sender.User
 			if v.Info.Chat.Server == "lid" {
 				sender = v.Info.MessageSource.SenderAlt.User
-				fmt.Println("lid ", sender)
 			}
 
 			// Send text
 			if text != "" {
-				go sendToWebhook(webhook, webhookTest, user, pass, OutgoingWebhookPayload{
+				go sendToWebhook(OutgoingWebhookPayload{
 					Sender:  sender,
 					Message: text,
 				})
@@ -198,8 +186,7 @@ func registerMessageHandler(client *whatsmeow.Client, webhook, webhookTest, user
 					fmt.Println("failed to download audio:", err)
 					return
 				}
-				fmt.Println("voice received", len(data))
-				go sendToWebhookVoice(webhook, webhookTest, user, pass, OutgoingWebhookPayload{
+				go sendToWebhookVoice(OutgoingWebhookPayload{
 					Sender: sender,
 					Voice:  data,
 				})
@@ -208,10 +195,18 @@ func registerMessageHandler(client *whatsmeow.Client, webhook, webhookTest, user
 	})
 }
 
+// startHTTP starts an HTTP server to handle incoming requests to send WhatsApp messages
 func startHTTP(ctx context.Context, client *whatsmeow.Client, listenAddr string) {
 	http.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// Basic Auth
+		u, p, ok := r.BasicAuth()
+		if !ok || u != user || p != pass {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -246,7 +241,7 @@ func startHTTP(ctx context.Context, client *whatsmeow.Client, listenAddr string)
 	}()
 }
 
-// --- WhatsApp Client ---
+// startClient connects the WhatsApp client, handling QR code generation if needed
 func startClient(ctx context.Context, client *whatsmeow.Client) {
 	if client.Store.ID == nil {
 		qrChan, _ := client.GetQRChannel(ctx)
@@ -255,7 +250,8 @@ func startClient(ctx context.Context, client *whatsmeow.Client) {
 		}
 		for evt := range qrChan {
 			if evt.Event == "code" {
-				fmt.Println("QR code:", evt.Code)
+				fmt.Println("Scan the QR code below to connect to WhatsApp:")
+				qrterminal.Generate(evt.Code, qrterminal.L, os.Stdout)
 			}
 		}
 	} else {
@@ -265,14 +261,12 @@ func startClient(ctx context.Context, client *whatsmeow.Client) {
 	}
 }
 
-// --- Main ---
 func main() {
-	fmt.Println("version 2")
+	fmt.Println("version 0.3.0")
 	ctx := context.Background()
-	webhook, webhookTest, user, pass, listenAddr := loadConfig()
 	client := newClient(ctx)
 
-	registerMessageHandler(client, webhook, webhookTest, user, pass)
+	registerMessageHandler(client)
 	startHTTP(ctx, client, listenAddr)
 	startClient(ctx, client)
 
