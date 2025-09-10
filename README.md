@@ -22,11 +22,11 @@ It forwards incoming WhatsApp messages (text + voice notes) to webhooks and prov
 - Create .env:
 
 ```
-TEXT_WEBHOOK_URL=http://n8n.local/webhook/whatsapp-text
-VOICE_WEBHOOK_URL=http://n8n.local/webhook/whatsapp-voice
+TEXT_WEBHOOK_URL=http://localhost:8080/webhook/whatsapp
+VOICE_WEBHOOK_URL=http://localhost:8080/webhook/whatsapp/voice
 WEBHOOK_USER=youruser
 WEBHOOK_PASS=yourpass
-LISTEN_ADDR=:8080
+LISTEN_ADDR=0.0.0.0:1012
 ```
 
 - Run:
@@ -61,3 +61,8 @@ Content-Type: application/json
 - This is unofficial and not affiliated with WhatsApp.
 - Use responsibly to avoid account bans.
 - For production: run behind reverse proxy + HTTPS.
+
+## Example N8N Workflow
+
+![n8n Workflow Example](./example_n8n.json)
+You can import the above JSON into n8n to set up a basic workflow for handling WhatsApp messages.
