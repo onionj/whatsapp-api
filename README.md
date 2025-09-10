@@ -62,7 +62,5 @@ Content-Type: application/json
 - Use responsibly to avoid account bans.
 - For production: run behind reverse proxy + HTTPS.
 
-## Example N8N Workflow
-
-![n8n Workflow Example](./example_n8n.json)
-You can import the above JSON into n8n to set up a basic workflow for handling WhatsApp messages.
+## Example N8N Workflow Image
+![n8n Workflow Example](./screenshot/1.png)
