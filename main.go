@@ -43,6 +43,7 @@ var (
 	user         string
 	pass         string
 	listenAddr   string
+	version      string
 )
 
 func init() {
@@ -262,7 +263,7 @@ func startClient(ctx context.Context, client *whatsmeow.Client) {
 }
 
 func main() {
-	fmt.Println("version 0.3.0")
+	fmt.Println("version " + version)
 	ctx := context.Background()
 	client := newClient(ctx)
 
