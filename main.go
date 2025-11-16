@@ -11,7 +11,9 @@ import (
 	"net/textproto"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 	"go.mau.fi/whatsmeow"
@@ -30,11 +32,13 @@ type OutgoingWebhookPayload struct {
 	Sender  string `json:"sender"`
 	Message string `json:"message"`
 	Voice   []byte `json:"voice,omitempty"`
+	IsGroup bool   `json:"is_group"`
 }
 
 type IncomingSendRequest struct {
-	Number string `json:"number"`
-	Text   string `json:"text"`
+	Number  string `json:"number"`
+	Text    string `json:"text"`
+	IsGroup bool   `json:"is_group"`
 }
 
 var (
@@ -60,7 +64,7 @@ func init() {
 
 // sendToWebhook is a helper function to send new whatsapp message to the configured webhook
 func sendToWebhook(payload OutgoingWebhookPayload) {
-	fmt.Println(payload.Sender, payload.Message)
+	fmt.Println(payload.Sender, payload.Message, "IsGroup:", payload.IsGroup)
 	data, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", textWebhook, bytes.NewBuffer(data))
 	req.Header.Set("Content-Type", "application/json")
@@ -76,13 +80,14 @@ func sendToWebhook(payload OutgoingWebhookPayload) {
 
 // sendToWebhookVoice is a helper function to send new whatsapp voice note to the configured webhook
 func sendToWebhookVoice(payload OutgoingWebhookPayload) {
-	fmt.Println(payload.Sender, "voice", len(payload.Voice))
+	fmt.Println(payload.Sender, "voice", len(payload.Voice), "IsGroup:", payload.IsGroup)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
 	// include sender as a field
 	_ = writer.WriteField("sender", payload.Sender)
+	_ = writer.WriteField("is_group", strconv.FormatBool(payload.IsGroup))
 
 	// choose filename & content-type based on header detection
 	filename := "file.oga"
@@ -127,11 +132,11 @@ func sendToWebhookVoice(payload OutgoingWebhookPayload) {
 	client := &http.Client{}
 	res, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("----->>> Error in calling webhook, %T\n", err)
+		fmt.Printf("Error in calling webhook, %T\n", err)
 		return
 	}
 	if res.StatusCode != 200 {
-		fmt.Printf("----->>> Error in calling webhook, %s\n", res.Status)
+		fmt.Printf("Error in calling webhook, %s\n", res.Status)
 		return
 	}
 }
@@ -167,9 +172,15 @@ func registerMessageHandler(client *whatsmeow.Client) {
 				text = v.Message.VideoMessage.GetCaption()
 			}
 
-			sender := v.Info.Sender.User
-			if v.Info.Chat.Server == "lid" {
+			var sender string
+
+			switch v.Info.Chat.Server {
+			case types.HiddenUserServer:
 				sender = v.Info.MessageSource.SenderAlt.User
+			case types.GroupServer:
+				sender = v.Info.MessageSource.Chat.User
+			default:
+				sender = v.Info.Sender.User
 			}
 
 			// Send text
@@ -177,6 +188,7 @@ func registerMessageHandler(client *whatsmeow.Client) {
 				go sendToWebhook(OutgoingWebhookPayload{
 					Sender:  sender,
 					Message: text,
+					IsGroup: v.Info.IsGroup,
 				})
 				return
 			}
@@ -188,17 +200,28 @@ func registerMessageHandler(client *whatsmeow.Client) {
 					return
 				}
 				go sendToWebhookVoice(OutgoingWebhookPayload{
-					Sender: sender,
-					Voice:  data,
+					Sender:  sender,
+					Voice:   data,
+					IsGroup: v.Info.IsGroup,
 				})
 			}
 		}
 	})
 }
 
+// logging http log middleware
+func logging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		fmt.Printf("%s %s %s\n", r.Method, r.URL.Path, time.Since(start))
+	})
+}
+
 // startHTTP starts an HTTP server to handle incoming requests to send WhatsApp messages
 func startHTTP(ctx context.Context, client *whatsmeow.Client, listenAddr string) {
-	http.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
 			return
@@ -221,13 +244,18 @@ func startHTTP(ctx context.Context, client *whatsmeow.Client, listenAddr string)
 			return
 		}
 
-		jid := types.NewJID(req.Number, "s.whatsapp.net")
+		var jid types.JID
+		if req.IsGroup {
+			jid = types.NewJID(req.Number, types.GroupServer)
+		} else {
+			jid = types.NewJID(req.Number, types.DefaultUserServer)
+		}
 		msg := &waProto.Message{
 			Conversation: proto.String(req.Text),
 		}
 
 		if _, err := client.SendMessage(ctx, jid, msg); err != nil {
-			http.Error(w, "failed to send", http.StatusInternalServerError)
+			http.Error(w, "failed to send: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -236,7 +264,7 @@ func startHTTP(ctx context.Context, client *whatsmeow.Client, listenAddr string)
 
 	go func() {
 		fmt.Println("HTTP server on", listenAddr)
-		if err := http.ListenAndServe(listenAddr, nil); err != nil {
+		if err := http.ListenAndServe(listenAddr, logging(mux)); err != nil {
 			panic(err)
 		}
 	}()
