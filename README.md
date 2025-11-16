@@ -48,7 +48,8 @@ Content-Type: application/json
 
 {
   "number": "1234567890",
-  "text": "Hello from n8n!"
+  "text": "Hello from n8n!",
+  "is_group": false
 }
 ```
 
